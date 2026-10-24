@@ -1,7 +1,8 @@
-
 const express = require('express');
+const cors = require('cors');
 const app = express();
 
+app.use(cors()); // <--- This is the magic line that allows Netlify to talk to Render
 app.use(express.json());
 
 app.post('/api/create-payment', async (req, res) => {
