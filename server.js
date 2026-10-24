@@ -1,54 +1,86 @@
 const express = require('express');
 const cors = require('cors');
-const Flutterwave = require('flutterwave-node-v3');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Render will inject your secret keys here
-const flw = new Flutterwave(process.env.FLW_PUBLIC_KEY, process.env.FLW_SECRET_KEY);
-
+// Route 1: Create Payment Link (Direct API Call)
 app.post('/api/create-payment', async (req, res) => {
   try {
     const { jobId, amount, email } = req.body;
+    
     const payload = {
       tx_ref: `domco-${jobId}-${Date.now()}`,
       amount: amount,
       currency: "NGN",
-      redirect_url: "https://google.com",
-      customer: { email: email || "test@test.com" },
-      customizations: { title: "Domco Hub Escrow", description: `Funding Job ${jobId}` }
+      redirect_url: "https://google.com", 
+      customer: { 
+        email: email || "test@test.com",
+        name: "Domco Client"
+      },
+      customizations: {
+        title: "Domco Hub Escrow",
+        description: `Funding for Job ${jobId}`
+      }
     };
-    const response = await flw.Standard.create_payment(payload);
-    if (response.status === "success") {
-      res.json({ paymentLink: response.data.link });
+
+    const response = await fetch('https://api.flutterwave.com/v3/payments', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.FLW_SECRET_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await response.json();
+
+    if (data.status === "success") {
+      res.json({ paymentLink: data.data.link });
     } else {
-      res.status(400).json({ error: "Payment failed" });
+      console.error("Flutterwave Error:", data);
+      res.status(400).json({ error: data.message || "Payment creation failed" });
     }
   } catch (error) {
+    console.error("Server Error:", error);
     res.status(500).json({ error: error.message });
   }
 });
 
+// Route 2: Release Escrow (Pay Freelancer)
 app.post('/api/release-escrow', async (req, res) => {
   try {
     const { jobId, amount } = req.body;
+    
     const payload = {
-      account_bank: "044",
-      account_number: "0690000040",
-      amount: amount * 0.6,
+      account_bank: "044", 
+      account_number: "0690000040", 
+      amount: amount * 0.6, 
       narration: `Domco Payout Job ${jobId}`,
       currency: "NGN",
       reference: `payout-${jobId}-${Date.now()}`
     };
-    const response = await flw.Transfer.initiate(payload);
-    if (response.status === "success") {
+
+    const response = await fetch('https://api.flutterwave.com/v3/transfers', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.FLW_SECRET_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await response.json();
+
+    if (data.status === "success") {
       res.json({ message: "Payout successful!" });
     } else {
-      res.status(400).json({ error: "Transfer failed" });
+      console.error("Flutterwave Transfer Error:", data);
+      res.status(400).json({ error: data.message || "Transfer failed" });
     }
   } catch (error) {
+    console.error("Server Error:", error);
     res.status(500).json({ error: error.message });
   }
 });
