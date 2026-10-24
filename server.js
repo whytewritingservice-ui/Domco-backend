@@ -5,7 +5,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Fetch ALL banks from Flutterwave
+// 1. Fetch ALL banks
 app.get('/api/banks', async (req, res) => {
   try {
     const response = await fetch('https://api.flutterwave.com/v3/banks/NG', {
@@ -17,6 +17,7 @@ app.get('/api/banks', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// 2. Create Payment (Fund Escrow)
 app.post('/api/create-payment', async (req, res) => {
   try {
     const { jobId, amount, email } = req.body;
@@ -36,6 +37,7 @@ app.post('/api/create-payment', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// 3. Verify Payment
 app.post('/api/verify-payment', async (req, res) => {
   try {
     const { tx_ref } = req.body;
@@ -49,11 +51,24 @@ app.post('/api/verify-payment', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// 4. Release Escrow (Pay Freelancer Real Bank)
 app.post('/api/release-escrow', async (req, res) => {
   try {
-    const { jobId, amount } = req.body;
-    const payload = { account_bank: "044", account_number: "0690000040", amount: amount * 0.6, narration: `Domco Payout Job ${jobId}`, currency: "NGN", reference: `payout-${jobId}-${Date.now()}` };
-    const response = await fetch('https://api.flutterwave.com/v3/transfers', { method: 'POST', headers: { 'Authorization': `Bearer ${process.env.FLW_SECRET_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const { jobId, amount, freelancerBankCode, freelancerAccountNumber } = req.body;
+    
+    const payload = {
+      account_bank: freelancerBankCode, 
+      account_number: freelancerAccountNumber, 
+      amount: amount * 0.6, // 60% to freelancer
+      narration: `Domco Payout Job ${jobId}`,
+      currency: "NGN",
+      reference: `payout-${jobId}-${Date.now()}`
+    };
+    
+    const response = await fetch('https://api.flutterwave.com/v3/transfers', { 
+      method: 'POST', headers: { 'Authorization': `Bearer ${process.env.FLW_SECRET_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) 
+    });
+    
     const data = await response.json();
     if (data.status === "success") res.json({ message: "Payout successful!" });
     else res.status(400).json({ error: data.message });
