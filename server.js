@@ -14,7 +14,7 @@ app.post('/api/create-payment', async (req, res) => {
       tx_ref: `domco-${jobId}-${Date.now()}`,
       amount: amount,
       currency: "NGN",
-      redirect_url: "https://google.com", 
+      redirect_url: https://benevolent-figolla-387f49.netlify.app
       customer: { 
         email: email || "test@test.com",
         name: "Domco Client"
