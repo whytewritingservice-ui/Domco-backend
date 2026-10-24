@@ -23,7 +23,7 @@ app.post('/api/create-payment', async (req, res) => {
     const payload = {
       tx_ref: `domco-${jobId}-${Date.now()}`,
       amount: amount, currency: "NGN",
-      redirect_url: "https://benevolent-figolla-387f49.netlify.app",
+      redirect_url: "https://whytewritingservice-ui.github.io/Domco-app/",
       customer: { email: email || "test@test.com", name: "Domco Client" },
       customizations: { title: "Domco Hub Escrow", description: `Funding for Job ${jobId}` }
     };
