@@ -4,7 +4,82 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+const admin = require('firebase-admin');
 
+// Initialize Firebase Admin (Requires a Service Account Key)
+// Note: In a real production environment, you upload your Firebase Service Account JSON to Render 
+// and set the FIREBASE_SERVICE_ACCOUNT environment variable.
+// For now, we will mock the DB calls so the backend doesn't crash if the key is missing.
+let db;
+try {
+  // If you add the FIREBASE_SERVICE_ACCOUNT env var, this will connect.
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    db = admin.firestore();
+    console.log("✅ Firebase Admin Connected");
+  } else {
+    console.warn("⚠️ FIREBASE_SERVICE_ACCOUNT not set. Backend DB access is mocked.");
+  }
+} catch (e) {
+  console.error("Firebase Admin Error:", e.message);
+}
+
+// ==========================================
+// 9. TIPS & MILESTONES (Backend Routes)
+// ==========================================
+
+// Charge a Tip
+app.post('/api/charge-tip', async (req, res) => {
+  try {
+    const { jobId, freelancerId, amount, email } = req.body;
+    
+    // Create a separate Flutterwave payment for the tip
+    const payload = {
+      tx_ref: `domco-tip-${jobId}-${Date.now()}`,
+      amount: amount,
+      currency: "NGN",
+      redirect_url: "https://whytewritingservice-ui.github.io/Domco-app/",
+      customer: { email: email },
+      customizations: { title: "Domco Tip", description: `Tip for job ${jobId}` }
+    };
+
+    const response = await fetch('https://api.flutterwave.com/v3/payments', {
+      method: 'POST', headers: { 'Authorization': `Bearer ${process.env.FLW_SECRET_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    
+    if (data.status === "success") {
+      res.json({ paymentLink: data.data.link });
+    } else {
+      res.status(400).json({ error: data.message });
+    }
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// Fund Milestone (Partial Funding)
+app.post('/api/fund-milestone', async (req, res) => {
+  try {
+    const { jobId, amount, email, milestoneIndex } = req.body;
+    
+    const payload = {
+      tx_ref: `domco-milestone-${milestoneIndex}-${jobId}-${Date.now()}`,
+      amount: amount,
+      currency: "NGN",
+      redirect_url: "https://whytewritingservice-ui.github.io/Domco-app/",
+      customer: { email: email },
+      customizations: { title: "Domco Milestone", description: `Milestone ${milestoneIndex + 1} for Job ${jobId}` }
+    };
+
+    const response = await fetch('https://api.flutterwave.com/v3/payments', {
+      method: 'POST', headers: { 'Authorization': `Bearer ${process.env.FLW_SECRET_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    
+    if (data.status === "success") res.json({ paymentLink: data.data.link });
+    else res.status(400).json({ error: data.message });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
 // Environment Variables Check
 const requiredEnv = ['FLW_SECRET_KEY', 'GEMINI_API_KEY', 'TERMII_API_KEY'];
 requiredEnv.forEach(env => {
