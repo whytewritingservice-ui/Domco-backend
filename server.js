@@ -360,6 +360,102 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'active', timestamp: new Date().toISOString() });
 });
 
+// ==========================================
+// 10. AUTO-RELEASE CRON JOB
+// ==========================================
+app.post('/api/auto-release', async (req, res) => {
+  // Security check: Only allow your cron job service to trigger this
+  const secret = req.headers['x-cron-secret'];
+  if (secret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized. Missing cron secret.' });
+  }
+
+  if (!db) {
+    return res.status(500).json({ error: 'Firebase Admin not connected. Cannot auto-release.' });
+  }
+
+  try {
+    const now = Date.now();
+    const threeDaysAgo = now - (3 * 24 * 60 * 60 * 1000); // 3 days in milliseconds
+    let releasedCount = 0;
+
+    // Find all jobs with status 'delivered'
+    const jobsRef = db.collection('jobs');
+    const snapshot = await jobsRef.where('status', '==', 'delivered').get();
+
+    if (snapshot.empty) {
+      return res.json({ message: 'No delivered jobs found.' });
+    }
+
+    for (const doc of snapshot.docs) {
+      const job = doc.data();
+      const deliveredTime = job.deliveredAt ? job.deliveredAt.toMillis() : 0;
+
+      // Check if it has been delivered for more than 3 days
+      if (deliveredTime > 0 && deliveredTime < threeDaysAgo) {
+        // Get Freelancer Bank Details
+        const freelancerDoc = await db.collection('users').doc(job.freelancerId).get();
+        const fProfile = freelancerDoc.data();
+
+        if (fProfile && fProfile.bankCode && fProfile.accountNumber) {
+          const payoutAmount = job.amount * 0.65;
+          
+          try {
+            // Trigger Flutterwave Transfer
+            const payload = { 
+              account_bank: fProfile.bankCode, 
+              account_number: fProfile.accountNumber, 
+              amount: payoutAmount, 
+              narration: `Auto-Release: ${job.gigTitle}`, 
+              currency: "NGN", 
+              reference: `auto-${doc.id}-${Date.now()}` 
+            };
+            
+            const response = await fetch('https://api.flutterwave.com/v3/transfers', { 
+              method: 'POST', 
+              headers: { 'Authorization': `Bearer ${process.env.FLW_SECRET_KEY}`, 'Content-Type': 'application/json' }, 
+              body: JSON.stringify(payload) 
+            });
+            
+            const data = await response.json();
+            
+            if (data.status === "success") {
+              // Update Job Status
+              await jobsRef.doc(doc.id).update({ 
+                status: 'paid', 
+                paidAt: admin.firestore.FieldValue.serverTimestamp(),
+                autoReleased: true
+              });
+              
+              // Log Transaction
+              await db.collection('transactions').add({
+                userId: job.freelancerId, 
+                jobId: doc.id, 
+                amount: payoutAmount, 
+                type: 'payout', 
+                note: `Auto-Release: ${job.gigTitle}`, 
+                createdAt: admin.firestore.FieldValue.serverTimestamp()
+              });
+              
+              releasedCount++;
+              console.log(`✅ Auto-released ₦${payoutAmount} for job ${doc.id}`);
+            } else {
+              console.error(`❌ Flutterwave transfer failed for job ${doc.id}:`, data.message);
+            }
+          } catch (err) {
+            console.error(`❌ Error releasing job ${doc.id}:`, err.message);
+          }
+        }
+      }
+    }
+
+    res.json({ message: 'Auto-release check complete', releasedCount });
+  } catch (error) {
+    console.error("Auto-release Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Start the Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
