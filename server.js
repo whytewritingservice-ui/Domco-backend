@@ -243,22 +243,36 @@ app.post('/api/refund-client', async (req, res) => {
 // 3. AI, SMS & WALLET ROUTES
 // ==========================================
 
-// AI Gig Writer (Google Gemini)
+// 7. AI Gig Writer (Google Gemini - Updated for new AQ. keys)
 app.post('/api/generate-gig', async (req, res) => {
   try {
     const { keywords } = req.body;
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return res.status(500).json({ error: 'Gemini API key not configured' });
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey 
+      },
       body: JSON.stringify({
         contents: [{ 
           parts: [{ text: `You are a professional copywriter for a freelance app. Write a short, engaging gig description (under 100 words) based on these keywords: ${keywords}. Do not include quotes.` }] 
         }]
       })
     });
+
+    const data = await response.json();
+    
+    if (data.candidates && data.candidates[0].content.parts[0].text) {
+      res.json({ text: data.candidates[0].content.parts[0].text });
+    } else {
+      console.error("Gemini Error Details:", JSON.stringify(data));
+      res.status(400).json({ error: data.error?.message || 'AI generation failed' });
+    }
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
 
     const data = await response.json();
     if (data.candidates && data.candidates[0].content.parts[0].text) {
