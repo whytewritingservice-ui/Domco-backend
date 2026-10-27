@@ -321,7 +321,16 @@ app.post('/api/auto-release', async (req, res) => {
     res.json({ message: 'Auto-release complete', released });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-
+// ---- IP ADDRESS FINDER ----
+app.get('/api/my-ip', async (req, res) => {
+  try {
+    const r = await fetch('https://api.ipify.org?format=json');
+    const d = await r.json();
+    res.json({ render_server_ip: d.ip });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 // ---- START SERVER ----
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Domco backend live on ${PORT}`));
