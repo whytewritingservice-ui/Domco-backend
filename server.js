@@ -181,19 +181,54 @@ app.post('/api/release-escrow', requireAuth, async (req, res) => {
 });
 
 // ---- WEBHOOK ----
-app.post('/webhook/flutterwave', (req, res) => {
+app.post('/webhook/flutterwave', async (req, res) => {
   const hash = req.headers['verif-hash'];
   if (!hash || hash !== process.env.FLW_SECRET_HASH) return res.status(401).end();
+  
   const event = req.body || {};
-  const ref = event.data?.reference || event.txRef;
+  const ref = event.data?.tx_ref || event.data?.reference; // Get the tx_ref
   const status = event.data?.status || event.status;
 
-  if (status && String(status).toUpperCase().includes('SUCCESS') && ref) {
-    if (ref.startsWith('release_')) {
-      const jobId = ref.replace('release_', '');
-      db.collection('jobs').doc(jobId).update({ status: 'paid', confirmedAt: admin.firestore.FieldValue.serverTimestamp() }).catch(() => {});
+  // Handle successful payments (charge.completed)
+  if (event.type === 'charge.completed' && status === 'successful' && ref) {
+    try {
+      const intentDoc = await db.collection('payments').doc(ref).get();
+      if (!intentDoc.exists) return res.status(404).end();
+      
+      const intent = intentDoc.data();
+      if (intent.status === 'successful') return res.status(200).end(); // Prevent double crediting
+
+      // Mark payment as successful
+      await db.collection('payments').doc(ref).update({
+        status: 'successful',
+        flwId: event.data.id,
+        verifiedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      // Credit the user's wallet
+      if (intent.purpose === 'wallet') {
+        await db.collection('users').doc(intent.userId).update({
+          walletBalance: admin.firestore.FieldValue.increment(intent.amount)
+        });
+        await db.collection('transactions').add({
+          userId: intent.userId,
+          amount: intent.amount,
+          type: 'deposit',
+          note: 'Wallet top-up via Flutterwave',
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      }
+    } catch (e) {
+      console.error("Webhook processing error:", e);
     }
   }
+
+  // Handle escrow release confirmation
+  if (status && String(status).toUpperCase().includes('SUCCESS') && ref && ref.startsWith('release_')) {
+    const jobId = ref.replace('release_', '');
+    db.collection('jobs').doc(jobId).update({ status: 'paid', confirmedAt: admin.firestore.FieldValue.serverTimestamp() }).catch(() => {});
+  }
+
   res.status(200).end();
 });
 
