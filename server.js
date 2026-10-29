@@ -331,6 +331,59 @@ app.get('/api/my-ip', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// ---- INTERNATIONAL WITHDRAWAL (USD, GBP, EUR) ----
+app.post('/api/withdraw-international', requireAuth, async (req, res) => {
+  try {
+    const { amount, currency, accountNumber, bankCode, accountName } = req.body;
+    const amt = Number(amount);
+    
+    if (!amt || amt < 10) return res.status(400).json({ error: `Minimum international withdrawal is 10 ${currency}` });
+    
+    // 1. Convert foreign currency to NGN to check balance
+    let exchangeRate = 1;
+    if (currency === 'USD') exchangeRate = 1500;
+    if (currency === 'GBP') exchangeRate = 1900;
+    if (currency === 'EUR') exchangeRate = 1600;
+    
+    const ngnEquivalent = amt * exchangeRate;
+    const balance = Number(req.profile.walletBalance || 0);
+    
+    if (balance < ngnEquivalent) {
+      return res.status(400).json({ error: `Insufficient balance. You need roughly ₦${ngnEquivalent.toLocaleString()} in your wallet.` });
+    }
+
+    const reference = `intl_wd_${req.user.uid}_${Date.now()}`;
+    
+    // 2. Initiate International Transfer via Flutterwave
+    const r = await fetch('https://api.flutterwave.com/v3/transfers', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        account_bank: bankCode, // e.g., "SWIFT"
+        account_number: accountNumber,
+        amount: amt,
+        currency: currency, 
+        narration: 'Domco International Withdrawal',
+        reference: reference,
+        beneficiary_name: accountName 
+      })
+    });
+    
+    const d = await r.json();
+    
+    if (d.status === 'success') {
+      await db.collection('users').doc(req.user.uid).update({ walletBalance: admin.firestore.FieldValue.increment(-ngnEquivalent) });
+      await db.collection('transactions').add({ 
+        userId: req.user.uid, amount: amt, currency: currency, ngnDeducted: ngnEquivalent,
+        type: 'international_withdrawal', note: `Withdrawal to ${currency} account`, reference, 
+        createdAt: admin.firestore.FieldValue.serverTimestamp() 
+      });
+      res.json({ message: 'International withdrawal initiated', reference });
+    } else {
+      res.status(400).json({ error: d.message || 'Transfer failed' });
+    }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 // ---- START SERVER ----
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Domco backend live on ${PORT}`));
