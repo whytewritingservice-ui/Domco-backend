@@ -384,6 +384,59 @@ app.post('/api/withdraw-international', requireAuth, async (req, res) => {
     }
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// ---- ULTIMATE PAN-AFRICAN MOBILE MONEY WITHDRAWAL ----
+app.post('/api/withdraw-africa-momo', requireAuth, async (req, res) => {
+  try {
+    const { amount, currency, network, phone } = req.body; 
+    const amt = Number(amount);
+    
+    if (!amt || amt < 10) return res.status(400).json({ error: 'Minimum withdrawal is 10 ' + currency });
+    
+    // Approximate exchange rates to NGN (Update these as global markets change)
+    const rates = { 
+      GHS: 100, KES: 10, ZAR: 80, UGX: 0.4, TZS: 0.6, RWF: 1.2, ZMW: 60,
+      XOF: 2.5, XAF: 2.5, MZN: 25, MWK: 1.5, SLL: 0.1
+    };
+    const ngnEquivalent = amt * (rates[currency] || 1);
+    
+    const balance = Number(req.profile.walletBalance || 0);
+    if (balance < ngnEquivalent) {
+      return res.status(400).json({ error: `Insufficient balance. You need roughly ₦${ngnEquivalent.toLocaleString()} for this withdrawal.` });
+    }
+
+    const reference = `af_wd_${req.user.uid}_${Date.now()}`;
+    
+    const r = await fetch('https://api.flutterwave.com/v3/transfers', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        account_bank: network, 
+        account_number: phone, 
+        amount: amt,
+        currency: currency, 
+        narration: 'Domco Hub Payout',
+        reference: reference,
+        beneficiary_name: req.profile.first + ' ' + req.profile.last
+      })
+    });
+    
+    const d = await r.json();
+    
+    if (d.status === 'success') {
+      await db.collection('users').doc(req.user.uid).update({ 
+        walletBalance: admin.firestore.FieldValue.increment(-ngnEquivalent) 
+      });
+      await db.collection('transactions').add({ 
+        userId: req.user.uid, amount: amt, currency: currency, ngnDeducted: ngnEquivalent,
+        type: 'africa_momo_withdrawal', note: `Withdrawal to ${network}`, reference, 
+        createdAt: admin.firestore.FieldValue.serverTimestamp() 
+      });
+      res.json({ message: 'African MoMo withdrawal initiated', reference });
+    } else {
+      res.status(400).json({ error: d.message || 'Transfer failed' });
+    }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 // ---- START SERVER ----
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Domco backend live on ${PORT}`));
